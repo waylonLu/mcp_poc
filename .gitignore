@@ -25,9 +25,6 @@ env/
 .env
 .env.local
 *.env
-config/*.yaml
-!config/example.yaml
-!config/default.yaml
 
 # Testing and Coverage
 .pytest_cache/

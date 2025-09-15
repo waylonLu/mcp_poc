@@ -1,0 +1,36 @@
+server:
+  name: "API Integration MCP Server"
+  version: "1.0.0"
+  description: "集成多个外部API的MCP服务器"
+  port: 8000
+
+apis:
+  - name: "json_placeholder_api"
+    base_url: "http://localhost:5678/api"
+    headers:
+      X-N8N-API-KEY: ${X_N8N_API_KEY}
+    endpoints:
+      - name: "get_users"
+        path: "/v1/users"
+        method: "GET"
+        description: "获取所有用户信息"
+        tool_name: "get_all_users"
+        headers:
+          Content-Type: "application/json"
+
+  - name: "get_cherrypicks_info_api"
+    base_url: "https://cicapp-poc-cfhzbmdxebcbgsfs.a03.azurefd.net/dify/v1"
+    headers:
+      Authorization: ${CHERRYPICKS_AUTHORIZATION}
+      Content-Type: "application/json"
+    endpoints:
+      - name: "get_cherrypicks_info"
+        path: "/chat-messages"
+        method: "POST"
+        description: "cherrypicks is the name of a company. This api returns the company's policies"
+        tool_name: "get_cherrypicks_info"
+        parameters:
+          - name: "query"
+            type: "string"
+            description: "query for string"
+            required: true
