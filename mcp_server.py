@@ -6,7 +6,7 @@ import logging
 import os
 
 # 创建 FastMCP 服务器实例
-mcp = FastMCP(name="api-integration-server", port=int(os.getenv("PORT", 8000)))
+mcp = FastMCP(name="api-integration-server")
 
 @mcp.tool(name="get_all_users", 
           description="Get a list of all users from the user service"
@@ -52,4 +52,5 @@ async def get_cherrypicks_info(query: str) -> Dict[str, Any]:
         }
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    mcp.run(transport="sse", host="0.0.0.0")
+    
