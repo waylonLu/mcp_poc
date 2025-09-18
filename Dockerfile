@@ -8,8 +8,9 @@ COPY . /app
 # 安装依赖
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# 暴露端口
-EXPOSE 8000
+
+# Expose ports
+EXPOSE 8000 8001
 
 # 启动服务（如用 Uvicorn）
 CMD ["python", "mcp_server.py"]
