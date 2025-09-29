@@ -78,7 +78,7 @@ class Database:
             ("1002", "Emma Johnson", 2000.0, "6222021001000002"),
             ("1003", "Michael Brown", 3000.0, "6222021001000003"),
             ("1004", "Sarah Davis", 7000.0, "6222021001000004"),
-            ("1005", "David Wilson", 8000.0, "6222021001000005")
+            ("1005", "David Wilson", 50000.0, "6222021001000005")
         ]
         conn.executemany(
             "INSERT INTO accounts (id, name, balance, card_number) VALUES (?, ?, ?, ?)",
