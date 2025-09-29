@@ -1,9 +1,9 @@
-
 import sqlite3
 from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from schemas.bank_models import Account, Transaction
+from schemas.financial_models import FinancialProduct, UserInvestment
 
 class Database:
     def __init__(self, db_path="db/db.sqlite3"):
@@ -38,6 +38,33 @@ class Database:
                     FOREIGN KEY (to_account) REFERENCES accounts (id)
                 )
             """)
+            # 创建理财产品表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS financial_products (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    min_investment REAL NOT NULL,
+                    expected_return_rate REAL NOT NULL,
+                    risk_level TEXT NOT NULL,
+                    duration_days INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'available'
+                )
+            """)
+            # 创建用户投资记录表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_investments (
+                    id TEXT PRIMARY KEY,
+                    account_id TEXT NOT NULL,
+                    product_id TEXT NOT NULL,
+                    investment_amount REAL NOT NULL,
+                    investment_date TEXT NOT NULL,
+                    expected_maturity_date TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    FOREIGN KEY (account_id) REFERENCES accounts (id),
+                    FOREIGN KEY (product_id) REFERENCES financial_products (id)
+                )
+            """)
             # 插入示例数据（如果表为空）
             if conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 0:
                 self._insert_sample_data(conn)
@@ -66,6 +93,17 @@ class Database:
         conn.executemany(
             "INSERT INTO transactions (id, from_account, to_account, amount, timestamp, description) VALUES (?, ?, ?, ?, ?, ?)",
             sample_transactions
+        )
+        
+        # 插入示例理财产品
+        sample_products = [
+            ("FP001", "Stable Wealth 30 Days", "Low-risk 30-day fixed wealth management", 1000.0, 0.035, "Low Risk", 30, "available"),
+            ("FP002", "Enhanced Yield 90 Days", "Medium-risk 90-day wealth management", 5000.0, 0.045, "Medium Risk", 90, "available"),
+            ("FP003", "High Yield 180 Days", "High-risk high-yield wealth management", 10000.0, 0.065, "High Risk", 180, "available")
+        ]
+        conn.executemany(
+            "INSERT INTO financial_products (id, name, description, min_investment, expected_return_rate, risk_level, duration_days, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            sample_products
         )
     
     def get_account(self, account_id: str) -> Optional[Account]:
@@ -152,6 +190,126 @@ class Database:
                 ))
             
             return transactions
+    
+    def get_financial_products(self) -> List[FinancialProduct]:
+        """获取所有理财产品"""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, name, description, min_investment, expected_return_rate, risk_level, duration_days, status FROM financial_products WHERE status = 'available'"
+            )
+            
+            products = []
+            for row in cursor.fetchall():
+                products.append(FinancialProduct(
+                    id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    min_investment=row[3],
+                    expected_return_rate=row[4],
+                    risk_level=row[5],
+                    duration_days=row[6],
+                    status=row[7]
+                ))
+            
+            return products
+    
+    def get_financial_product(self, product_id: str) -> Optional[FinancialProduct]:
+        """获取特定理财产品"""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT id, name, description, min_investment, expected_return_rate, risk_level, duration_days, status FROM financial_products WHERE id = ?",
+                (product_id,)
+            )
+            
+            row = cursor.fetchone()
+            if row:
+                return FinancialProduct(
+                    id=row[0],
+                    name=row[1],
+                    description=row[2],
+                    min_investment=row[3],
+                    expected_return_rate=row[4],
+                    risk_level=row[5],
+                    duration_days=row[6],
+                    status=row[7]
+                )
+            return None
+    
+    def purchase_financial_product(self, account_id: str, product_id: str, amount: float) -> Optional[UserInvestment]:
+        """购买理财产品"""
+        with self.get_connection() as conn:
+            # 检查账户是否存在且有足够余额
+            account = self.get_account(account_id)
+            if not account:
+                return None
+            
+            # 检查理财产品是否存在
+            product = self.get_financial_product(product_id)
+            if not product:
+                return None
+            
+            # 检查投资金额是否满足最低要求
+            if amount < product.min_investment:
+                return None
+            
+            # 检查账户余额是否足够
+            if account.balance < amount:
+                return None
+            
+            # 扣除账户余额
+            conn.execute(
+                "UPDATE accounts SET balance = balance - ? WHERE id = ?",
+                (amount, account_id)
+            )
+            
+            # 创建投资记录
+            investment_id = str(uuid.uuid4())
+            investment_date = datetime.now().isoformat()
+            expected_maturity_date = (datetime.now() + timedelta(days=product.duration_days)).isoformat()
+            
+            conn.execute(
+                "INSERT INTO user_investments (id, account_id, product_id, investment_amount, investment_date, expected_maturity_date, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (investment_id, account_id, product_id, amount, investment_date, expected_maturity_date, "active")
+            )
+            
+            conn.commit()
+            
+            return UserInvestment(
+                id=investment_id,
+                account_id=account_id,
+                product_id=product_id,
+                investment_amount=amount,
+                investment_date=datetime.fromisoformat(investment_date),
+                expected_maturity_date=datetime.fromisoformat(expected_maturity_date),
+                status="active"
+            )
+    
+    def get_user_investments(self, account_id: str) -> List[UserInvestment]:
+        """获取用户的所有投资记录"""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, account_id, product_id, investment_amount, investment_date, expected_maturity_date, status 
+                FROM user_investments 
+                WHERE account_id = ? 
+                ORDER BY investment_date DESC
+                """,
+                (account_id,)
+            )
+            
+            investments = []
+            for row in cursor.fetchall():
+                investments.append(UserInvestment(
+                    id=row[0],
+                    account_id=row[1],
+                    product_id=row[2],
+                    investment_amount=row[3],
+                    investment_date=datetime.fromisoformat(row[4]),
+                    expected_maturity_date=datetime.fromisoformat(row[5]),
+                    status=row[6]
+                ))
+            
+            return investments
 
 # 初始化数据库
 db = Database()

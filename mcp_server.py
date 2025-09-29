@@ -1,7 +1,8 @@
 from fastmcp import FastMCP
-from typing import Dict, Any
+from typing import Dict, Any, List
 from db.database import db
 from clients.api_client import api_client
+from schemas.financial_models import FinancialProduct, UserInvestment
 import sqlite3
 import asyncio
 
@@ -187,6 +188,88 @@ async def run_mcp():
 
 async def run_mcp_banking():
     await mcp_banking.run_async(transport="sse", port=8001, host="0.0.0.0")
+
+# 理财产品查询功能
+@mcp_banking.tool(
+    name="list_financial_products",
+    description="List all available financial products. Returns a formatted list of products with details."
+)
+def list_financial_products() -> str:
+    """List all available financial products"""
+    products = db.get_financial_products()
+    
+    if not products:
+        return "No financial products available"
+    
+    result = ["Available financial products:"]
+    for i, product in enumerate(products, 1):
+        result.append(
+            f"{i}. {product.name} (ID: {product.id})\n"
+            f"   Description: {product.description}\n"
+            f"   Minimum investment: {product.min_investment} RMB\n"
+            f"   Expected return rate: {product.expected_return_rate * 100:.1f}%\n"
+            f"   Risk level: {product.risk_level}\n"
+            f"   Duration: {product.duration_days} days"
+        )
+    
+    return "\n".join(result)
+
+# 购买理财产品功能
+@mcp_banking.tool(
+    name="purchase_financial_product",
+    description="Purchase a financial product. Args: account_id (account to purchase from), product_id (product ID to purchase), amount (investment amount). Returns purchase result message."
+)
+def purchase_financial_product(account_id: str, product_id: str, amount: float) -> str:
+    """Purchase financial product
+    
+    Args:
+        account_id: Account ID to purchase from
+        product_id: Financial product ID
+        amount: Investment amount
+    """
+    investment = db.purchase_financial_product(account_id, product_id, amount)
+    
+    if not investment:
+        return "Purchase failed. Please check: 1) Account exists, 2) Product exists, 3) Amount meets minimum requirement, 4) Sufficient balance"
+    
+    return f"Purchase successful! Investment ID: {investment.id}\n" \
+           f"Amount: {amount} RMB\n" \
+           f"Expected maturity date: {investment.expected_maturity_date.strftime('%Y-%m-%d')}\n" \
+           f"Status: {investment.status}"
+
+# 查询用户投资记录功能
+@mcp_banking.tool(
+    name="get_user_investments",
+    description="Get investment records for a specific account. Args: account_id (account to query). Returns formatted investment list or error message."
+)
+def get_user_investments(account_id: str) -> str:
+    """Get user investment records
+    
+    Args:
+        account_id: Account ID
+    """
+    account = db.get_account(account_id)
+    if not account:
+        return f"Error: Account {account_id} does not exist"
+    
+    investments = db.get_user_investments(account_id)
+    
+    if not investments:
+        return f"Account {account_id} has no investment records"
+    
+    result = [f"Investment records for account {account_id} ({account.name}):"]
+    for i, investment in enumerate(investments, 1):
+        product = db.get_financial_product(investment.product_id)
+        product_name = product.name if product else investment.product_id
+        
+        result.append(
+            f"   Amount: {investment.investment_amount} RMB\n"
+            f"   Investment date: {investment.investment_date.strftime('%Y-%m-%d')}\n"
+            f"   Expected maturity date: {investment.expected_maturity_date.strftime('%Y-%m-%d')}\n"
+            f"   Status: {investment.status}"
+        )
+    
+    return "\n".join(result)
 
 async def main():
     # Run both services concurrently
