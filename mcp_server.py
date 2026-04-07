@@ -322,11 +322,6 @@ def fill_expense_report(
     saved_info = "" if upload_info.startswith("\n文件已上传") else f"\n文件已保存至: {output_path}"
     return (
         f"报销表格已填写完成！\n"
-        f"员工姓名: {name}\n"
-        f"报销时期: {period}\n"
-        f"报销类型: {sheet_type}\n"
-        f"填写记录数: {filled} 条"
-        f"{saved_info}"
         f"{upload_info}"
     )
 
