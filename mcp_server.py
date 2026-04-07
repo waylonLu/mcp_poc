@@ -5,6 +5,9 @@ from clients.api_client import api_client
 from schemas.financial_models import FinancialProduct, UserInvestment
 import sqlite3
 import asyncio
+import json
+import os
+import openpyxl
 
 # Create FastMCP server instances
 mcp = FastMCP(name="api-integration-server")
@@ -182,6 +185,115 @@ def format_card_number(card_number: str) -> str:
     if not card_number or len(card_number) < 8:
         return card_number or ""
     return f"{card_number[:4]}...{card_number[-4:]}"
+
+
+# 填写报销表格
+_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "template", "报销表格_202501.xlsx")
+_OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "template", "output")
+
+LOCAL_CATEGORIES = ["餐食", "交通", "娱乐", "医疗费", "通讯费", "电子相关", "其它费用"]
+OVERSEAS_CATEGORIES = ["旅费报销(机票)", "旅费报销(住宿费)", "旅费报销(车费)", "旅费报销(餐费)", "其它费用", "通讯费"]
+
+@mcp.tool(
+    name="fill_expense_report",
+    description="""Fill the expense report Excel template 报销表格_202501.xlsx 并保存为新文件.
+
+Parameters:
+- name: Employee name (姓名)
+- period: Expense period, e.g. '2025年1月' (报销时期)
+- sheet_type: '本地' for local expenses or '海外' for overseas expenses
+- items: JSON array string of expense items.
+  本地 format: [{"date": "2025-01-15", "details": "客户餐饮", "category": "餐食", "amount": 150.0}, ...]
+  Valid 本地 categories: 餐食 / 交通 / 娱乐 / 医疗费 / 通讯费 / 电子相关 / 其它费用
+  海外 format: [{"date": "2025-01-15", "details": "Flight ticket", "category": "旅费报销(机票)", "amount": 500.0}, ...]
+  Valid 海外 categories: 旅费报销(机票) / 旅费报销(住宿费) / 旅费报销(车费) / 旅费报销(餐费) / 其它费用 / 通讯费
+  (海外 amounts are in original currency; RMB conversion is auto-calculated via exchange rate)
+- project_name: Project name (海外 only)
+- original_currency: Currency code for overseas expenses, e.g. 'USD' or 'HKD' (海外 only)
+- exchange_rate: Exchange rate to RMB (海外 only, e.g. 7.2 for USD)
+- output_filename: Output filename without extension (optional, auto-generated if omitted)
+
+Returns the path to the saved filled Excel file."""
+)
+def fill_expense_report(
+    name: str,
+    period: str,
+    items: str,
+    sheet_type: str = "本地",
+    project_name: str = "",
+    original_currency: str = "USD",
+    exchange_rate: float = 7.2,
+    output_filename: str = ""
+) -> str:
+    missing = [f for f, v in [("name", name), ("period", period), ("items", items)] if not v or not str(v).strip()]
+    if missing:
+        return f"Error: 以下必填字段缺失，请补充后重试：{', '.join(missing)}"
+
+    if sheet_type not in ("本地", "海外"):
+        return "Error: sheet_type must be '本地' or '海外'"
+
+    try:
+        expense_items = json.loads(items)
+    except json.JSONDecodeError as e:
+        return f"Error: Invalid items JSON — {str(e)}"
+
+    if not isinstance(expense_items, list):
+        return "Error: items must be a JSON array"
+
+    try:
+        wb = openpyxl.load_workbook(_TEMPLATE_PATH)
+    except Exception as e:
+        return f"Error: Cannot load template file — {str(e)}"
+
+    if sheet_type == "本地":
+        ws = wb["报销表格_本地"]
+        ws["B5"] = name
+        ws["B6"] = period
+        start_row = 9
+        max_rows = 30  # rows 9–38
+        for i, item in enumerate(expense_items[:max_rows]):
+            row = start_row + i
+            ws[f"A{row}"] = item.get("date", "")
+            ws[f"B{row}"] = item.get("details", "")
+            ws[f"C{row}"] = item.get("category", "")
+            ws[f"D{row}"] = item.get("amount", 0)
+    else:  # 海外
+        ws = wb["报销表格_海外"]
+        ws["B4"] = name
+        ws["B5"] = period
+        ws["B6"] = project_name
+        ws["L6"] = original_currency
+        ws["L7"] = exchange_rate
+        start_row = 9
+        max_rows = 34  # rows 9–42 (row 43 starts local-currency section)
+        for i, item in enumerate(expense_items[:max_rows]):
+            row = start_row + i
+            ws[f"A{row}"] = item.get("date", "")
+            ws[f"B{row}"] = item.get("details", "")
+            ws[f"C{row}"] = item.get("category", "")
+            ws[f"D{row}"] = item.get("amount", 0)
+            # Column E (RMB amount) is auto-calculated by the existing formula =ROUND(D*$L$7,2)
+
+    os.makedirs(_OUTPUT_DIR, exist_ok=True)
+    if not output_filename:
+        safe_period = period.replace("/", "-").replace(" ", "_")
+        output_filename = f"报销表格_{name}_{safe_period}_{sheet_type}"
+    output_path = os.path.join(_OUTPUT_DIR, f"{output_filename}.xlsx")
+
+    try:
+        wb.save(output_path)
+    except Exception as e:
+        return f"Error: Cannot save output file — {str(e)}"
+
+    filled = min(len(expense_items), max_rows)
+    return (
+        f"报销表格已填写完成！\n"
+        f"员工姓名: {name}\n"
+        f"报销时期: {period}\n"
+        f"报销类型: {sheet_type}\n"
+        f"填写记录数: {filled} 条\n"
+        f"文件已保存至: {output_path}"
+    )
 
 async def run_mcp():
     await mcp.run_async(transport="sse", host="0.0.0.0")

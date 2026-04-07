@@ -41,3 +41,7 @@ temp/
 Thumbs.db
 
 db/db.sqlite3
+
+log/*
+aws_server.txt
+x-agent-deployment-note.md
