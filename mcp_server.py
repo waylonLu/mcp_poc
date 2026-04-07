@@ -8,6 +8,10 @@ import asyncio
 import json
 import os
 import openpyxl
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Create FastMCP server instances
 mcp = FastMCP(name="api-integration-server")
@@ -285,14 +289,42 @@ def fill_expense_report(
     except Exception as e:
         return f"Error: Cannot save output file — {str(e)}"
 
+    # 上传到文件服务
+    upload_info = ""
+    upload_url = os.getenv("UPLOAD_API_URL")
+    if upload_url:
+        try:
+            with open(output_path, "rb") as f:
+                with httpx.Client(timeout=30) as client:
+                    upload_resp = client.post(
+                        upload_url,
+                        files={"file": (f"{output_filename}.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                        data={"filePath": "agent_source", "rename": "false"},
+                    )
+            resp_json = upload_resp.json()
+            if resp_json.get("code") == "000000" and resp_json.get("data"):
+                file_url = resp_json["data"][0].get("url", "")
+                os.remove(output_path)
+                print(f"[上传成功] {output_filename}.xlsx -> {file_url}")
+                upload_info = f"\n文件已上传至服务器\n下载链接: {file_url}"
+            else:
+                msg = resp_json.get('msg', '未知错误')
+                print(f"[上传失败] {output_filename}.xlsx -> 服务器返回: {msg}")
+                upload_info = f"\n文件上传失败: {msg}"
+        except Exception as e:
+            print(f"[上传失败] {output_filename}.xlsx -> 异常: {str(e)}")
+            upload_info = f"\n文件上传失败: {str(e)}"
+
     filled = min(len(expense_items), max_rows)
+    saved_info = "" if upload_info.startswith("\n文件已上传") else f"\n文件已保存至: {output_path}"
     return (
         f"报销表格已填写完成！\n"
         f"员工姓名: {name}\n"
         f"报销时期: {period}\n"
         f"报销类型: {sheet_type}\n"
-        f"填写记录数: {filled} 条\n"
-        f"文件已保存至: {output_path}"
+        f"填写记录数: {filled} 条"
+        f"{saved_info}"
+        f"{upload_info}"
     )
 
 async def run_mcp():
