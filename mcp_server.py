@@ -373,7 +373,7 @@ def submit_leave_request(name: str, leave_type: str, start_date: str, end_date: 
     ]
 
     if leave_type in ("personal", "sick"):
-        response_lines.append(f"[{type_display} is for demo only — annual leave balance will be {remaining} days after approval]")
+        response_lines.append(f"[{type_display} leave does not deduct from annual leave, still have {remaining} days remaining]")
     else:
         response_lines.append(f"If approved, remaining annual leave would be: {remaining} days")
 
