@@ -192,6 +192,9 @@ def format_card_number(card_number: str) -> str:
 
 
 # 填写报销表格
+# 初始假期天数配置
+_INITIAL_LEAVE_DAYS = 10
+
 _TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "template", "报销表格_202501.xlsx")
 _OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "template", "output")
 
@@ -324,6 +327,58 @@ def fill_expense_report(
         f"报销表格已填写完成！\n"
         f"{upload_info}"
     )
+
+# Leave request tool
+@mcp.tool(
+    name="submit_leave_request",
+    description="""Submit a leave request for an employee. Use this when someone wants to request time off, apply for leave, ask for leave, or submit a leave application.
+Args: name (employee name, required), leave_type (leave category: personal / sick / annual, required), start_date (start date in YYYY-MM-DD format, required), end_date (end date in YYYY-MM-DD format, required).
+Personal and sick leave are demo only — they show remaining days but do not actually deduct from any balance.
+Annual leave deducts from a 10-day annual leave balance.
+Returns a confirmation message with leave details and remaining days after approval."""
+)
+def submit_leave_request(name: str, leave_type: str, start_date: str, end_date: str) -> str:
+    """Submit a leave request (demo)"""
+    # Validate required fields
+    missing = [f for f, v in [("name", name), ("leave_type", leave_type), ("start_date", start_date), ("end_date", end_date)] if not v or not str(v).strip()]
+    if missing:
+        return f"Error: missing required fields: {', '.join(missing)}"
+
+    leave_type = leave_type.strip().lower()
+    if leave_type not in ("personal", "sick", "annual"):
+        return "Error: leave_type must be one of: personal / sick / annual"
+
+    # Parse dates to calculate days
+    try:
+        from datetime import datetime
+        start = datetime.strptime(start_date.strip(), "%Y-%m-%d")
+        end = datetime.strptime(end_date.strip(), "%Y-%m-%d")
+        if end < start:
+            return "Error: end_date cannot be before start_date"
+        days = (end - start).days + 1
+    except ValueError:
+        return "Error: invalid date format, use YYYY-MM-DD"
+
+    # Build response
+    remaining = _INITIAL_LEAVE_DAYS - days if leave_type == "annual" else _INITIAL_LEAVE_DAYS
+
+    type_display = {"personal": "Personal Leave", "sick": "Sick Leave", "annual": "Annual Leave"}[leave_type]
+
+    response_lines = [
+        f"Leave request submitted!",
+        f"Employee: {name.strip()}",
+        f"Type: {type_display}",
+        f"Period: {start_date.strip()} to {end_date.strip()}",
+        f"Duration: {days} day(s)",
+        f"Awaiting manager approval...",
+    ]
+
+    if leave_type in ("personal", "sick"):
+        response_lines.append(f"[{type_display} is for demo only — annual leave balance will be {remaining} days after approval]")
+    else:
+        response_lines.append(f"If approved, remaining annual leave would be: {remaining} days")
+
+    return "\n".join(response_lines)
 
 async def run_mcp():
     await mcp.run_async(transport="sse", host="0.0.0.0")
