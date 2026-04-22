@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from db.database import db
 from clients.api_client import api_client
 from schemas.financial_models import FinancialProduct, UserInvestment
+from hospital_mcp_server import mcp_hospital
 import sqlite3
 import asyncio
 import json
@@ -385,6 +386,9 @@ async def run_mcp():
 async def run_mcp_banking():
     await mcp_banking.run_async(transport="sse", port=8001, host="0.0.0.0")
 
+async def run_mcp_hospital():
+    await mcp_hospital.run_async(transport="sse", port=8002, host="0.0.0.0")
+
 # 理财产品查询功能
 @mcp_banking.tool(
     name="list_financial_products",
@@ -468,8 +472,8 @@ def get_user_investments(account_id: str) -> str:
     return "\n".join(result)
 
 async def main():
-    # Run both services concurrently
-    await asyncio.gather(run_mcp(), run_mcp_banking())
+    # Run all services concurrently
+    await asyncio.gather(run_mcp(), run_mcp_banking(), run_mcp_hospital())
 
 if __name__ == "__main__":
     asyncio.run(main())
