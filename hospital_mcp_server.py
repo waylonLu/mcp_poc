@@ -1,108 +1,9 @@
+import json
 from fastmcp import FastMCP
-import sqlite3
-import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
+from db.hospital_db import hospital_db
 
 mcp_hospital = FastMCP(name="hospital-appointment-server")
-
-# ── Database ──────────────────────────────────────────────────────────────────
-
-DB_PATH = "db/hospital.sqlite3"
-
-
-def get_conn():
-    return sqlite3.connect(DB_PATH)
-
-
-def init_hospital_db():
-    print("Initialising hospital database...")
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS doctors (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                specialty TEXT NOT NULL,
-                title TEXT NOT NULL,
-                hospital TEXT NOT NULL,
-                available_days TEXT NOT NULL,
-                available_times TEXT NOT NULL,
-                consultation_fee REAL NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS patients (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                date_of_birth TEXT NOT NULL,
-                gender TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                id_number TEXT NOT NULL
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS appointments (
-                id TEXT PRIMARY KEY,
-                patient_id TEXT NOT NULL,
-                doctor_id TEXT NOT NULL,
-                appointment_date TEXT NOT NULL,
-                appointment_time TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'scheduled',
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                notes TEXT,
-                FOREIGN KEY (patient_id) REFERENCES patients(id),
-                FOREIGN KEY (doctor_id) REFERENCES doctors(id)
-            )
-        """)
-
-        if conn.execute("SELECT COUNT(*) FROM doctors").fetchone()[0] == 0:
-            _insert_sample_data(conn)
-        conn.commit()
-
-
-def _insert_sample_data(conn):
-    print("Inserting hospital sample data...")
-    doctors = [
-        ("D001", "Dr. Chen Wei",       "Cardiology",        "Chief Physician",     "City Central Hospital", "Mon,Tue,Thu,Fri", "09:00-12:00,14:00-17:00", 200.0),
-        ("D002", "Dr. Liu Mei",        "Neurology",         "Associate Physician", "City Central Hospital", "Mon,Wed,Fri",     "08:30-11:30,13:30-16:30", 180.0),
-        ("D003", "Dr. Zhang Hao",      "Orthopedics",       "Chief Physician",     "City Central Hospital", "Tue,Wed,Thu",     "09:00-12:00,14:00-17:00", 220.0),
-        ("D004", "Dr. Wang Fang",      "Pediatrics",        "Attending Physician", "City Central Hospital", "Mon,Tue,Wed,Thu,Fri", "08:00-12:00",         150.0),
-        ("D005", "Dr. Li Jian",        "General Surgery",   "Associate Physician", "City Central Hospital", "Mon,Wed,Fri",     "10:00-12:00,15:00-17:00", 160.0),
-        ("D006", "Dr. Zhao Xin",       "Dermatology",       "Attending Physician", "City Central Hospital", "Tue,Thu,Fri",     "09:00-12:00",             120.0),
-        ("D007", "Dr. Sun Ying",       "Ophthalmology",     "Chief Physician",     "City Central Hospital", "Mon,Tue,Thu",     "09:00-11:30,14:00-16:30", 180.0),
-        ("D008", "Dr. Zhou Qiang",     "Internal Medicine", "Associate Physician", "City Central Hospital", "Mon,Tue,Wed,Thu,Fri", "08:00-12:00,14:00-17:00", 130.0),
-    ]
-    conn.executemany(
-        "INSERT INTO doctors VALUES (?,?,?,?,?,?,?,?)", doctors
-    )
-
-    patients = [
-        ("P001", "Alice Wong",   "1985-03-12", "Female", "138-0001-0001", "110101198503120011"),
-        ("P002", "Bob Zhang",    "1992-07-25", "Male",   "139-0002-0002", "110101199207250021"),
-        ("P003", "Carol Liu",    "1978-11-08", "Female", "137-0003-0003", "110101197811080031"),
-        ("P004", "David Chen",   "2005-01-30", "Male",   "136-0004-0004", "110101200501300041"),
-        ("P005", "Emily Wang",   "1965-05-20", "Female", "135-0005-0005", "110101196505200051"),
-    ]
-    conn.executemany(
-        "INSERT INTO patients VALUES (?,?,?,?,?,?)", patients
-    )
-
-    today = date.today()
-    appointments = [
-        (str(uuid.uuid4()), "P001", "D001", str(today + timedelta(days=2)),  "10:00", "scheduled",  "Chest pain check-up",          datetime.now().isoformat(), None),
-        (str(uuid.uuid4()), "P002", "D003", str(today + timedelta(days=3)),  "14:00", "scheduled",  "Knee pain evaluation",         datetime.now().isoformat(), None),
-        (str(uuid.uuid4()), "P003", "D008", str(today - timedelta(days=5)),  "09:00", "completed",  "Annual physical examination",   datetime.now().isoformat(), "All results normal"),
-        (str(uuid.uuid4()), "P004", "D004", str(today + timedelta(days=1)),  "08:30", "scheduled",  "Vaccination follow-up",        datetime.now().isoformat(), None),
-        (str(uuid.uuid4()), "P005", "D002", str(today - timedelta(days=2)),  "14:30", "cancelled",  "Headache consultation",        datetime.now().isoformat(), "Patient rescheduled"),
-        (str(uuid.uuid4()), "P001", "D008", str(today + timedelta(days=7)),  "09:30", "scheduled",  "Blood test review",            datetime.now().isoformat(), None),
-    ]
-    conn.executemany(
-        "INSERT INTO appointments VALUES (?,?,?,?,?,?,?,?,?)", appointments
-    )
-
-
-# Initialise on import
-init_hospital_db()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -120,146 +21,139 @@ def _mask_phone(phone: str) -> str:
     return f"{digits[:3]}****{digits[-4:]}"
 
 
+def _ok(data: dict) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _err(message: str) -> str:
+    return json.dumps({"error": message}, ensure_ascii=False)
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 @mcp_hospital.tool(
-    name="list_specialties",
-    description="List all available medical specialties at the hospital. Returns a list of specialties and the number of doctors in each."
+    name="hospital_list_specialties",
+    description=(
+        "Use this tool when the user wants to browse available medical departments or specialties "
+        "at the hospital, or when they need to know which specialty to choose before looking up doctors. "
+        "Do NOT use this tool when the user already knows the specialty and wants to find a specific doctor "
+        "— use hospital_list_doctors instead. "
+        "Returns a structured list of specialties with doctor counts."
+    )
 )
-def list_specialties() -> str:
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT specialty, COUNT(*) as cnt FROM doctors GROUP BY specialty ORDER BY specialty"
-        ).fetchall()
+def hospital_list_specialties() -> str:
+    rows = hospital_db.get_specialties()
     if not rows:
-        return "No specialties found."
-    lines = ["Available Medical Specialties:"]
-    for specialty, cnt in rows:
-        lines.append(f"  • {specialty} ({cnt} doctor{'s' if cnt > 1 else ''})")
-    return "\n".join(lines)
+        return _err("No specialties found.")
+    return _ok({
+        "specialties": [
+            {"name": specialty, "doctor_count": cnt}
+            for specialty, cnt in rows
+        ]
+    })
 
 
 @mcp_hospital.tool(
-    name="list_doctors",
+    name="hospital_list_doctors",
     description=(
-        "List doctors at the hospital. "
-        "Args: specialty (optional, filter by specialty e.g. 'Cardiology'). "
-        "Returns doctor names, titles, specialties, available days, and consultation fees."
+        "Use this tool when the user wants to find doctors, browse doctor profiles, check availability, "
+        "or compare consultation fees. Accepts an optional specialty filter. "
+        "Do NOT use this tool to check a specific doctor's booked schedule or time slots — "
+        "use hospital_get_doctor_schedule for that. "
+        "Returns doctor_id (required for booking), name, title, specialty, available days/times, and fee."
     )
 )
-def list_doctors(specialty: str = "") -> str:
-    with get_conn() as conn:
-        if specialty.strip():
-            rows = conn.execute(
-                "SELECT id, name, specialty, title, hospital, available_days, available_times, consultation_fee "
-                "FROM doctors WHERE LOWER(specialty) = LOWER(?) ORDER BY name",
-                (specialty.strip(),)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, name, specialty, title, hospital, available_days, available_times, consultation_fee "
-                "FROM doctors ORDER BY specialty, name"
-            ).fetchall()
-
+def hospital_list_doctors(specialty: str = "") -> str:
+    rows = hospital_db.get_doctors(specialty)
     if not rows:
-        return f"No doctors found{' for specialty: ' + specialty if specialty else ''}."
-
-    lines = [f"Doctors{' — ' + specialty if specialty else ''}:"]
-    for did, name, spec, title, hospital, avail_days, avail_times, fee in rows:
-        lines.append(
-            f"\n[{did}] {name} — {title}\n"
-            f"  Specialty  : {spec}\n"
-            f"  Hospital   : {hospital}\n"
-            f"  Available  : {avail_days}  |  {avail_times}\n"
-            f"  Fee        : ¥{fee:.0f}"
-        )
-    return "\n".join(lines)
-
-
-@mcp_hospital.tool(
-    name="get_doctor_schedule",
-    description=(
-        "Get a doctor's schedule and booked appointments for the next 7 days. "
-        "Args: doctor_id (required, e.g. 'D001'). "
-        "Returns the doctor's working days/times and existing bookings."
-    )
-)
-def get_doctor_schedule(doctor_id: str) -> str:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT id, name, specialty, title, available_days, available_times FROM doctors WHERE id = ?",
-            (doctor_id.strip(),)
-        ).fetchone()
-        if not row:
-            return f"Error: Doctor {doctor_id} not found."
-
-        _, name, specialty, title, avail_days, avail_times = row
-
-        today = date.today()
-        next_week = str(today + timedelta(days=7))
-        bookings = conn.execute(
-            "SELECT appointment_date, appointment_time, status FROM appointments "
-            "WHERE doctor_id = ? AND appointment_date >= ? AND appointment_date <= ? AND status != 'cancelled' "
-            "ORDER BY appointment_date, appointment_time",
-            (doctor_id, str(today), next_week)
-        ).fetchall()
-
-    lines = [
-        f"Schedule for {name} ({title}) — {specialty}",
-        f"Working days : {avail_days}",
-        f"Working hours: {avail_times}",
-        f"\nBooked slots in the next 7 days:",
-    ]
-    if bookings:
-        for appt_date, appt_time, status in bookings:
-            lines.append(f"  • {appt_date} {appt_time}  [{status}]")
-    else:
-        lines.append("  (No bookings in the next 7 days)")
-
-    return "\n".join(lines)
+        return _err(f"No doctors found{' for specialty: ' + specialty if specialty else ''}.")
+    return _ok({
+        "doctors": [
+            {
+                "doctor_id": did,
+                "name": name,
+                "title": title,
+                "specialty": spec,
+                "hospital": hosp,
+                "available_days": avail_days.split(","),
+                "available_times": avail_times.split(","),
+                "consultation_fee": fee,
+            }
+            for did, name, spec, title, hosp, avail_days, avail_times, fee in rows
+        ]
+    })
 
 
 @mcp_hospital.tool(
-    name="get_patient_info",
+    name="hospital_get_doctor_schedule",
     description=(
-        "Look up a patient record by name or patient ID. "
-        "Args: query (patient name or patient ID, required). "
-        "Returns patient details with masked sensitive fields."
+        "Use this tool when the user wants to check a specific doctor's booked time slots for the next 7 days "
+        "to find an available appointment time. Requires a doctor_id (e.g. 'D001'). "
+        "Do NOT use this tool to list all doctors or browse specialties — "
+        "use hospital_list_doctors or hospital_list_specialties for that. "
+        "Returns the doctor's working days, hours, and already-booked slots."
     )
 )
-def get_patient_info(query: str) -> str:
-    q = query.strip()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT id, name, date_of_birth, gender, phone, id_number FROM patients WHERE id = ? OR LOWER(name) = LOWER(?)",
-            (q, q)
-        ).fetchone()
+def hospital_get_doctor_schedule(doctor_id: str) -> str:
+    row = hospital_db.get_doctor(doctor_id)
     if not row:
-        return f"Error: Patient '{query}' not found."
+        return _err(f"Doctor {doctor_id} not found.")
+
+    did, name, specialty, title, avail_days, avail_times, fee = row
+    bookings = hospital_db.get_doctor_bookings(doctor_id)
+
+    return _ok({
+        "doctor_id": did,
+        "name": name,
+        "title": title,
+        "specialty": specialty,
+        "consultation_fee": fee,
+        "working_days": avail_days.split(","),
+        "working_hours": avail_times.split(","),
+        "booked_slots_next_7_days": [
+            {"date": d, "time": t, "status": s}
+            for d, t, s in bookings
+        ],
+    })
+
+
+@mcp_hospital.tool(
+    name="hospital_get_patient_info",
+    description=(
+        "Use this tool when the user wants to look up an existing patient's profile by name or patient ID. "
+        "Do NOT use this tool to register a new patient — use hospital_register_patient for that. "
+        "Do NOT use this tool to list a patient's appointments — use hospital_get_patient_appointments. "
+        "Sensitive fields (phone, ID number) are masked. Returns patient_id for use in other tools."
+    )
+)
+def hospital_get_patient_info(query: str) -> str:
+    row = hospital_db.get_patient(query.strip())
+    if not row:
+        return _err(f"Patient '{query}' not found.")
 
     pid, name, dob, gender, phone, id_num = row
-    return (
-        f"Patient ID  : {pid}\n"
-        f"Name        : {name}\n"
-        f"Date of Birth: {dob}\n"
-        f"Gender      : {gender}\n"
-        f"Phone       : {_mask_phone(phone)}\n"
-        f"ID Number   : {_mask_id(id_num)}"
-    )
+    return _ok({
+        "patient_id": pid,
+        "name": name,
+        "date_of_birth": dob,
+        "gender": gender,
+        "phone": _mask_phone(phone),
+        "id_number": _mask_id(id_num),
+    })
 
 
 @mcp_hospital.tool(
-    name="book_appointment",
+    name="hospital_book_appointment",
     description=(
-        "Book a medical appointment. "
-        "Args: patient_name (required), doctor_id (required, e.g. 'D001'), "
-        "appointment_date (required, YYYY-MM-DD), appointment_time (required, HH:MM), "
-        "reason (reason for visit, required). "
-        "The patient must already exist in the system. "
-        "Returns a confirmation with the appointment ID."
+        "Use this tool when the user wants to book a new medical appointment for an existing patient. "
+        "Requires: patient_name, doctor_id (from hospital_list_doctors), "
+        "appointment_date (YYYY-MM-DD), appointment_time (HH:MM), and reason for visit. "
+        "Do NOT use this tool if the patient is not yet registered — use hospital_register_patient first. "
+        "Do NOT use this tool to cancel or reschedule — use hospital_cancel_appointment instead. "
+        "Returns appointment_id and full booking details."
     )
 )
-def book_appointment(
+def hospital_book_appointment(
     patient_name: str,
     doctor_id: str,
     appointment_date: str,
@@ -269,190 +163,153 @@ def book_appointment(
     missing = [f for f, v in [
         ("patient_name", patient_name), ("doctor_id", doctor_id),
         ("appointment_date", appointment_date), ("appointment_time", appointment_time),
-        ("reason", reason)
+        ("reason", reason),
     ] if not v or not str(v).strip()]
     if missing:
-        return f"Error: missing required fields: {', '.join(missing)}"
+        return _err(f"Missing required fields: {', '.join(missing)}")
 
-    # Validate date format
     try:
         appt_date = datetime.strptime(appointment_date.strip(), "%Y-%m-%d").date()
     except ValueError:
-        return "Error: appointment_date must be in YYYY-MM-DD format."
+        return _err("appointment_date must be in YYYY-MM-DD format.")
 
     if appt_date < date.today():
-        return "Error: appointment_date cannot be in the past."
+        return _err("appointment_date cannot be in the past.")
 
-    # Validate time format
     try:
         datetime.strptime(appointment_time.strip(), "%H:%M")
     except ValueError:
-        return "Error: appointment_time must be in HH:MM format."
+        return _err("appointment_time must be in HH:MM format.")
 
-    with get_conn() as conn:
-        # Look up patient
-        patient_row = conn.execute(
-            "SELECT id, name FROM patients WHERE LOWER(name) = LOWER(?)",
-            (patient_name.strip(),)
-        ).fetchone()
-        if not patient_row:
-            return f"Error: Patient '{patient_name}' not found. Please register first."
+    patient_row = hospital_db.get_patient_by_name(patient_name)
+    if not patient_row:
+        return _err(f"Patient '{patient_name}' not found. Please register first.")
+    patient_id, pat_name = patient_row
 
-        patient_id, pat_name = patient_row
+    doctor_row = hospital_db.get_doctor(doctor_id)
+    if not doctor_row:
+        return _err(f"Doctor '{doctor_id}' not found.")
+    doc_id, doc_name, specialty, _, avail_days, _, fee = doctor_row
 
-        # Look up doctor
-        doctor_row = conn.execute(
-            "SELECT id, name, specialty, available_days, available_times, consultation_fee FROM doctors WHERE id = ?",
-            (doctor_id.strip(),)
-        ).fetchone()
-        if not doctor_row:
-            return f"Error: Doctor {doctor_id} not found."
-
-        _, doc_name, specialty, avail_days, __, fee = doctor_row
-
-        # Check doctor works on that weekday
-        weekday = appt_date.strftime("%a")  # Mon, Tue, ...
-        if weekday not in avail_days:
-            return (
-                f"Error: {doc_name} is not available on {weekday}. "
-                f"Working days: {avail_days}."
-            )
-
-        # Check for time conflict (same doctor, date, time)
-        conflict = conn.execute(
-            "SELECT id FROM appointments WHERE doctor_id = ? AND appointment_date = ? AND appointment_time = ? AND status != 'cancelled'",
-            (doctor_id, appointment_date.strip(), appointment_time.strip())
-        ).fetchone()
-        if conflict:
-            return f"Error: {doc_name} already has a booking at {appointment_date} {appointment_time}. Please choose another time."
-
-        # Create appointment
-        appt_id = str(uuid.uuid4())[:8].upper()
-        conn.execute(
-            "INSERT INTO appointments (id, patient_id, doctor_id, appointment_date, appointment_time, status, reason, created_at, notes) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (appt_id, patient_id, doctor_id, appointment_date.strip(), appointment_time.strip(),
-             "scheduled", reason.strip(), datetime.now().isoformat(), None)
+    weekday = appt_date.strftime("%a")
+    if weekday not in avail_days:
+        return _err(
+            f"{doc_name} is not available on {weekday}. Working days: {avail_days}."
         )
-        conn.commit()
 
-    return (
-        f"Appointment booked successfully!\n"
-        f"Appointment ID : {appt_id}\n"
-        f"Patient        : {pat_name}\n"
-        f"Doctor         : {doc_name} ({specialty})\n"
-        f"Date & Time    : {appointment_date} {appointment_time}\n"
-        f"Reason         : {reason}\n"
-        f"Consultation Fee: ¥{fee:.0f}\n"
-        f"Status         : Scheduled\n"
-        f"Please arrive 15 minutes early and bring your ID card."
+    if hospital_db.check_appointment_conflict(doc_id, appointment_date.strip(), appointment_time.strip()):
+        return _err(
+            f"{doc_name} already has a booking at {appointment_date} {appointment_time}. Please choose another time."
+        )
+
+    appointment_id = hospital_db.create_appointment(
+        patient_id, doc_id, appointment_date.strip(), appointment_time.strip(), reason
     )
+
+    return _ok({
+        "appointment_id": appointment_id,
+        "status": "scheduled",
+        "patient_id": patient_id,
+        "patient_name": pat_name,
+        "doctor_id": doc_id,
+        "doctor_name": doc_name,
+        "specialty": specialty,
+        "date": appointment_date.strip(),
+        "time": appointment_time.strip(),
+        "reason": reason.strip(),
+        "consultation_fee": fee,
+        "note": "Please arrive 15 minutes early and bring your ID card.",
+    })
 
 
 @mcp_hospital.tool(
-    name="cancel_appointment",
+    name="hospital_cancel_appointment",
     description=(
-        "Cancel an existing appointment. "
-        "Args: appointment_id (required), reason (optional cancellation reason). "
-        "Only 'scheduled' appointments can be cancelled."
+        "Use this tool when the user wants to cancel an existing scheduled appointment. "
+        "Requires appointment_id (from hospital_book_appointment or hospital_get_patient_appointments). "
+        "Do NOT use this tool on completed appointments — those cannot be cancelled. "
+        "Do NOT use this tool to book a new appointment — use hospital_book_appointment instead. "
+        "Returns the updated appointment status and details."
     )
 )
-def cancel_appointment(appointment_id: str, reason: str = "") -> str:
+def hospital_cancel_appointment(appointment_id: str, reason: str = "") -> str:
     appt_id = appointment_id.strip().upper()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT a.id, a.status, a.appointment_date, a.appointment_time, d.name, p.name "
-            "FROM appointments a "
-            "JOIN doctors d ON a.doctor_id = d.id "
-            "JOIN patients p ON a.patient_id = p.id "
-            "WHERE a.id = ?",
-            (appt_id,)
-        ).fetchone()
-        if not row:
-            return f"Error: Appointment {appt_id} not found."
+    row = hospital_db.get_appointment(appt_id)
+    if not row:
+        return _err(f"Appointment '{appt_id}' not found.")
 
-        _, status, appt_date, appt_time, doc_name, pat_name = row
+    aid, status, appt_date, appt_time, doc_name, pat_name = row
 
-        if status == "cancelled":
-            return f"Appointment {appt_id} is already cancelled."
-        if status == "completed":
-            return f"Error: Cannot cancel a completed appointment."
+    if status == "cancelled":
+        return _err(f"Appointment '{appt_id}' is already cancelled.")
+    if status == "completed":
+        return _err("Cannot cancel a completed appointment.")
 
-        notes = f"Cancelled by patient. Reason: {reason}" if reason else "Cancelled by patient."
-        conn.execute(
-            "UPDATE appointments SET status = 'cancelled', notes = ? WHERE id = ?",
-            (notes, appt_id)
-        )
-        conn.commit()
+    notes = f"Cancelled by patient. Reason: {reason}" if reason else "Cancelled by patient."
+    hospital_db.cancel_appointment(appt_id, notes)
 
-    return (
-        f"Appointment {appt_id} has been cancelled.\n"
-        f"Patient : {pat_name}\n"
-        f"Doctor  : {doc_name}\n"
-        f"Was scheduled for: {appt_date} {appt_time}"
-    )
+    return _ok({
+        "appointment_id": appt_id,
+        "status": "cancelled",
+        "patient_name": pat_name,
+        "doctor_name": doc_name,
+        "date": appt_date,
+        "time": appt_time,
+        "cancellation_notes": notes,
+    })
 
 
 @mcp_hospital.tool(
-    name="get_patient_appointments",
+    name="hospital_get_patient_appointments",
     description=(
-        "Get all appointments for a patient. "
-        "Args: patient_name (patient's full name, required), "
-        "status_filter (optional: 'scheduled' / 'completed' / 'cancelled' / 'all', default 'all'). "
-        "Returns a list of the patient's appointments with doctor and timing details."
+        "Use this tool when the user wants to view all appointments for a patient, "
+        "optionally filtered by status (scheduled / completed / cancelled / all). "
+        "Do NOT use this tool to book or cancel appointments — "
+        "use hospital_book_appointment or hospital_cancel_appointment instead. "
+        "Do NOT use this tool to look up patient profile details — use hospital_get_patient_info. "
+        "Returns a list of appointments, each with appointment_id for use in cancel or follow-up tools."
     )
 )
-def get_patient_appointments(patient_name: str, status_filter: str = "all") -> str:
-    with get_conn() as conn:
-        patient_row = conn.execute(
-            "SELECT id, name FROM patients WHERE LOWER(name) = LOWER(?)",
-            (patient_name.strip(),)
-        ).fetchone()
-        if not patient_row:
-            return f"Error: Patient '{patient_name}' not found."
+def hospital_get_patient_appointments(patient_name: str, status_filter: str = "all") -> str:
+    patient_row = hospital_db.get_patient_by_name(patient_name)
+    if not patient_row:
+        return _err(f"Patient '{patient_name}' not found.")
 
-        patient_id, pat_name = patient_row
+    patient_id, pat_name = patient_row
+    rows = hospital_db.get_patient_appointments(patient_id, status_filter.strip().lower())
 
-        if status_filter.strip().lower() == "all":
-            rows = conn.execute(
-                "SELECT a.id, d.name, d.specialty, a.appointment_date, a.appointment_time, a.status, a.reason, a.notes "
-                "FROM appointments a JOIN doctors d ON a.doctor_id = d.id "
-                "WHERE a.patient_id = ? ORDER BY a.appointment_date DESC, a.appointment_time DESC",
-                (patient_id,)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT a.id, d.name, d.specialty, a.appointment_date, a.appointment_time, a.status, a.reason, a.notes "
-                "FROM appointments a JOIN doctors d ON a.doctor_id = d.id "
-                "WHERE a.patient_id = ? AND a.status = ? ORDER BY a.appointment_date DESC, a.appointment_time DESC",
-                (patient_id, status_filter.strip().lower())
-            ).fetchall()
-
-    if not rows:
-        return f"No appointments found for {pat_name}{' with status: ' + status_filter if status_filter != 'all' else ''}."
-
-    lines = [f"Appointments for {pat_name}:"]
-    for aid, doc_name, specialty, appt_date, appt_time, status, reason, notes in rows:
-        lines.append(
-            f"\n[{aid}] {appt_date} {appt_time}  —  [{status.upper()}]\n"
-            f"  Doctor  : {doc_name} ({specialty})\n"
-            f"  Reason  : {reason}"
-        )
-        if notes:
-            lines.append(f"  Notes   : {notes}")
-    return "\n".join(lines)
+    return _ok({
+        "patient_id": patient_id,
+        "patient_name": pat_name,
+        "status_filter": status_filter,
+        "total": len(rows),
+        "appointments": [
+            {
+                "appointment_id": aid,
+                "doctor_name": doc_name,
+                "specialty": specialty,
+                "date": appt_date,
+                "time": appt_time,
+                "status": status,
+                "reason": reason,
+                "notes": notes,
+            }
+            for aid, doc_name, specialty, appt_date, appt_time, status, reason, notes in rows
+        ],
+    })
 
 
 @mcp_hospital.tool(
-    name="register_patient",
+    name="hospital_register_patient",
     description=(
-        "Register a new patient in the hospital system. "
-        "Args: name (full name, required), date_of_birth (YYYY-MM-DD, required), "
-        "gender (Male/Female, required), phone (required), id_number (national ID, required). "
-        "Returns the new patient ID on success."
+        "Use this tool when the user wants to register a new patient who does not yet exist in the system. "
+        "Requires: name, date_of_birth (YYYY-MM-DD), gender (Male/Female), phone, id_number (national ID). "
+        "Do NOT use this tool if the patient is already registered — use hospital_get_patient_info to verify first. "
+        "Do NOT use this tool to update existing patient records. "
+        "Returns patient_id which is needed for booking appointments."
     )
 )
-def register_patient(
+def hospital_register_patient(
     name: str,
     date_of_birth: str,
     gender: str,
@@ -461,40 +318,31 @@ def register_patient(
 ) -> str:
     missing = [f for f, v in [
         ("name", name), ("date_of_birth", date_of_birth),
-        ("gender", gender), ("phone", phone), ("id_number", id_number)
+        ("gender", gender), ("phone", phone), ("id_number", id_number),
     ] if not v or not str(v).strip()]
     if missing:
-        return f"Error: missing required fields: {', '.join(missing)}"
+        return _err(f"Missing required fields: {', '.join(missing)}")
 
     try:
         datetime.strptime(date_of_birth.strip(), "%Y-%m-%d")
     except ValueError:
-        return "Error: date_of_birth must be in YYYY-MM-DD format."
+        return _err("date_of_birth must be in YYYY-MM-DD format.")
 
     gender = gender.strip().capitalize()
     if gender not in ("Male", "Female"):
-        return "Error: gender must be 'Male' or 'Female'."
+        return _err("gender must be 'Male' or 'Female'.")
 
-    with get_conn() as conn:
-        existing = conn.execute(
-            "SELECT id FROM patients WHERE LOWER(name) = LOWER(?) AND id_number = ?",
-            (name.strip(), id_number.strip())
-        ).fetchone()
-        if existing:
-            return f"Patient already registered with ID: {existing[0]}"
+    existing = hospital_db.patient_exists(name, id_number)
+    if existing:
+        return _err(f"Patient already registered with patient_id: {existing[0]}")
 
-        patient_id = f"P{str(uuid.uuid4())[:6].upper()}"
-        conn.execute(
-            "INSERT INTO patients (id, name, date_of_birth, gender, phone, id_number) VALUES (?,?,?,?,?,?)",
-            (patient_id, name.strip(), date_of_birth.strip(), gender, phone.strip(), id_number.strip())
-        )
-        conn.commit()
+    patient_id = hospital_db.create_patient(name, date_of_birth, gender, phone, id_number)
 
-    return (
-        f"Patient registered successfully!\n"
-        f"Patient ID : {patient_id}\n"
-        f"Name       : {name.strip()}\n"
-        f"DOB        : {date_of_birth}\n"
-        f"Gender     : {gender}\n"
-        f"Phone      : {_mask_phone(phone)}"
-    )
+    return _ok({
+        "patient_id": patient_id,
+        "name": name.strip(),
+        "date_of_birth": date_of_birth.strip(),
+        "gender": gender,
+        "phone": _mask_phone(phone),
+        "status": "registered",
+    })
