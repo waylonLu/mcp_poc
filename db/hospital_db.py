@@ -1,10 +1,13 @@
+import os
 import sqlite3
 import uuid
 from datetime import datetime, date, timedelta
 
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "hospital.sqlite3")
+
 
 class HospitalDatabase:
-    def __init__(self, db_path="db/hospital.sqlite3"):
+    def __init__(self, db_path=_DEFAULT_DB_PATH):
         self.db_path = db_path
         self.init_database()
 
